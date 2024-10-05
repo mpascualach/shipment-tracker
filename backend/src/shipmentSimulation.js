@@ -1,8 +1,9 @@
 const sampleData = require('./sampleData');
+const { calculateDistance, toRadians } = require('../utils/geoUtils');
 
-const EARTH_RADIUS = 6371; // earth's radius in km
+const TIME_MULTIPLIER = 3600; // 1 second in simulation = 1 hour in real time
 
-function calculateNewPosition(shipment, route) {
+function calculateNewPosition(shipment, route, timeDelta) {
   // calculate distance between current position and destination
   if (shipment.status === 'Unloading' || shipment.status === 'Completed') { //the ship is no longer moving 
     return handleStaticShip(shipment);
@@ -10,7 +11,7 @@ function calculateNewPosition(shipment, route) {
 
   const { originCoords, destinationCoords } = route; // origin + destination coords from route
   const totalDistance = calculateDistance(originCoords, destinationCoords); // total distance from route (check func below)
-  const moveDistance = (shipment.currentSpeed * 1.852) / 3600; // knots to km/h then km/s
+  const moveDistance = (shipment.currentSpeed * 1.852 * timeDelta * TIME_MULTIPLIER) / 3600; // knots to km/h then km/s
 
   // new progress along route
   let newProgress = shipment.progress + (moveDistance / totalDistance);
@@ -37,28 +38,12 @@ function handleStaticShip(shipment) {
   if (shipment.status === 'Unloading') {
     shipment.unloadingTime = Date.now(); // set unloading start time if not set
 
-    // simulate unloading time (5 units at a time)
-    shipment.unloadingTime = (shipment.unloadingTime || 0) + 5;
-
-    if (shipment.unloadingTime >= 10) { // completed condition
+    if (shipment.unloadingTime >= 24 * 3600) { // 24 hours to unload
       return { ...shipment, status: 'Completed' };
     }
   }
   return shipment;
 }
-
-// calculate distance between two points on Earth - Haversine formula
-function calculateDistance(pos1, pos2) {
-  const dLat = toRadians(pos2.lat - pos1.lat);
-  const dLon = toRadians(pos2.lon - pos1.lon);
-  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(toRadians(pos1.lat)) * Math.cos(toRadians(pos2.lat)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return EARTH_RADIUS * c;
-}
-
 // interpolate between two positions based on fraction
 function interpolatePosition(pos1, pos2, fraction) {
   const lat = pos1.lat + (pos2.lat - pos1.lat) * fraction;
@@ -66,29 +51,28 @@ function interpolatePosition(pos1, pos2, fraction) {
   return { lat, lon };
 }
 
-// helper function to convert degrees to radians
-function toRadians(degrees) {
-  return degrees * Math.PI / 180;
+function updateAllShipments(timeDelta) { //timeDetla = amount of time that's passed since last update
+  const updatedShipments = {};
+
+  for (const [shipmentId, shipment] of Object.entries(sampleData.shipments)) { // Object.entries -> for iterating over objects
+    const route = sampleData.routes.find(r => r.id === shipment.routeId);
+
+    if (!route) {
+      console.error(`Route not found for shipment ${shipmentId}`);
+      continue;
+    }
+
+    const updatedShipmentData = calculateNewPosition(shipment, route, timeDelta);
+    updatedShipments[shipmentId] =  { ...shipments, ...updatedShipmentData};
+  }
+
+  Object.assign(sampleData.shipments, updatedShipments);
+
+  return updatedShipments;
 }
 
 module.exports = {
-  updateShipmentPosition: function(shipmentId) {
-    const shipment = sampleData.shipments[shipmentId];
-    const route = sampleData.routes.find(r => r.id === shipment.routeId);
-
-    if (!shipment || !route) {
-      throw new Error('Shipment or route not found');
-    }
-
-    const newShipmentData = calculateNewPosition(shipment, route);
-    
-    // Update the shipment data
-    Object.assign(shipment, newShipmentData);
-
-    return shipment;
-  },
-  calculateDistance,
+  updateAllShipments,
   interpolatePosition,
-  toRadians,
   calculateNewPosition
 }
